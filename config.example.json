@@ -1,0 +1,13 @@
+{
+  "curves": {
+    "internal": [[25, 70], [8, 58], [0, 48], [-6, 42], [-12, 38]],
+    "external": [[25, 45], [8, 30], [0, 18], [-6, 10], [-12, 5]]
+  },
+  "min": { "internal": 6, "external": 0 },
+  "offsets": { "P27h-20": 10 },
+  "hold_minutes": 15,
+  "override_tolerance": 2,
+  "ip_lookup": true,
+  "ip_cache_hours": 6,
+  "location": { "lat": 38.7223, "lon": -9.1393, "name": "Lisbon" }
+}

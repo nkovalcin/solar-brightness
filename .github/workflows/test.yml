@@ -1,0 +1,27 @@
+name: test
+
+on:
+  push:
+    paths-ignore: ["**.md"]
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover tests -v
+      - run: python3 macos/solar-brightness --sun --lat 48.15 --lon 17.11 --date 2026-12-21
+      - run: zsh -n macos/install.sh && zsh -n macos/uninstall.sh && plutil -lint macos/solar-brightness.plist
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install tzdata
+      - run: python -m unittest discover tests -v
+      - shell: powershell
+        run: .\windows\solar-brightness.ps1 -Sun -Lat 48.15 -Lon 17.11 -Date 2026-12-21

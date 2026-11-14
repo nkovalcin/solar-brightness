@@ -1,0 +1,479 @@
+#!/usr/bin/env python3
+"""
+solar-brightness: set display brightness from the real height of the sun.
+
+Every run computes the sun's elevation for your location and moves the
+brightness along a curve: bright at midday, dim after dusk, flat at night.
+Runs every 5 minutes from a LaunchAgent. Python standard library only.
+
+  solar-brightness                     apply brightness for the sun right now
+  solar-brightness --dry-run           show what would happen, change nothing
+  solar-brightness --resume            cancel the pause after a manual change
+  solar-brightness --sun [--date YYYY-MM-DD] [--lat LAT --lon LON]
+                                       sunrise, sunset and the curve for a day
+  solar-brightness --where             location, its source and the displays found
+  solar-brightness --set-location LAT LON [NAME]   pin a location
+  solar-brightness --set-location here             pin what is detected now
+  solar-brightness --set-location auto             back to automatic detection
+
+Displays
+  built-in   MacBook panel, through Apple's DisplayServices framework
+  external   any DDC/CI monitor that `m1ddc` can see (Apple Silicon)
+
+A manual change wins: when the brightness differs from what this tool set
+last time, it keeps your value and stays quiet for `hold_minutes`.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import json
+import math
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+VERSION = "1.0.0"
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "solar-brightness"
+CONFIG = CONFIG_DIR / "config.json"
+STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "solar-brightness" / "state.json"
+
+M1DDC = shutil.which("m1ddc") or "/opt/homebrew/bin/m1ddc"
+CORELOC = shutil.which("CoreLocationCLI") or "/opt/homebrew/bin/CoreLocationCLI"
+
+# Sun elevation in degrees -> brightness in percent. Linear between points.
+# Override any key in config.json; see config.example.json.
+DEFAULTS: dict = {
+    "curves": {
+        "internal": [[25, 70], [8, 58], [0, 48], [-6, 42], [-12, 38]],
+        "external": [[25, 45], [8, 30], [0, 18], [-6, 10], [-12, 5]],
+    },
+    "min": {"internal": 6, "external": 0},
+    "offsets": {},            # per external monitor name, e.g. {"P27h-20": 10}
+    "hold_minutes": 15,
+    "override_tolerance": 2,
+    "ip_lookup": True,        # ipinfo.io as a location fallback; set false to stay offline
+    "ip_cache_hours": 6,
+    "location": None,         # {"lat": .., "lon": .., "name": ".."} pins the location
+}
+
+
+# ── config and state ─────────────────────────────────────────────────────────
+def load_config() -> dict:
+    cfg = json.loads(json.dumps(DEFAULTS))
+    try:
+        user = json.loads(CONFIG.read_text())
+    except FileNotFoundError:
+        return cfg
+    except ValueError as e:
+        print(f"config.json is not valid JSON, using defaults ({e})", file=sys.stderr)
+        return cfg
+    for key, value in user.items():
+        if isinstance(value, dict) and isinstance(cfg.get(key), dict):
+            cfg[key].update(value)
+        else:
+            cfg[key] = value
+    return cfg
+
+
+def save_config_key(key: str, value) -> None:
+    try:
+        data = json.loads(CONFIG.read_text())
+    except (OSError, ValueError):
+        data = {}
+    if value is None:
+        data.pop(key, None)
+    else:
+        data[key] = value
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+def read_state() -> dict:
+    try:
+        return json.loads(STATE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(state: dict) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(state))
+
+
+# ── sun ──────────────────────────────────────────────────────────────────────
+def solar_elevation(when: datetime, lat: float, lon: float) -> float:
+    """Sun elevation above the horizon in degrees (NOAA, about 0.5° accuracy).
+
+    `when` must be timezone aware; it is converted to UTC, so time zones and
+    daylight saving time never matter.
+    """
+    when = when.astimezone(timezone.utc)
+    doy = when.timetuple().tm_yday
+    hour = when.hour + when.minute / 60 + when.second / 3600
+    g = 2 * math.pi / 365 * (doy - 1 + (hour - 12) / 24)
+    eqtime = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g)
+                       - 0.014615 * math.cos(2 * g) - 0.040849 * math.sin(2 * g))
+    decl = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g)
+            - 0.006758 * math.cos(2 * g) + 0.000907 * math.sin(2 * g)
+            - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
+    true_solar_minutes = hour * 60 + eqtime + 4 * lon
+    hour_angle = math.radians(true_solar_minutes / 4 - 180)
+    phi = math.radians(lat)
+    cos_zenith = (math.sin(phi) * math.sin(decl)
+                  + math.cos(phi) * math.cos(decl) * math.cos(hour_angle))
+    return 90 - math.degrees(math.acos(max(-1.0, min(1.0, cos_zenith))))
+
+
+def level_for(elevation: float, curve: list) -> int:
+    """Interpolate the curve. Points are [elevation, level], highest elevation first."""
+    points = sorted(((float(e), float(lv)) for e, lv in curve), reverse=True)
+    if elevation >= points[0][0]:
+        return round(points[0][1])
+    if elevation <= points[-1][0]:
+        return round(points[-1][1])
+    for (e_hi, l_hi), (e_lo, l_lo) in zip(points, points[1:]):
+        if e_lo <= elevation <= e_hi:
+            t = (elevation - e_lo) / (e_hi - e_lo)
+            return round(l_lo + t * (l_hi - l_lo))
+    return round(points[-1][1])
+
+
+def sun_events(day: datetime, lat: float, lon: float) -> list[tuple[str, datetime]]:
+    midnight = day.replace(hour=0, minute=0, second=0, microsecond=0)
+    events, prev = [], None
+    for m in range(1441):
+        t = midnight + timedelta(minutes=m)
+        e = solar_elevation(t, lat, lon)
+        if prev is not None:
+            if prev < -0.833 <= e:
+                events.append(("sunrise", t))
+            elif prev >= -0.833 > e:
+                events.append(("sunset", t))
+        prev = e
+    return events
+
+
+# ── location ─────────────────────────────────────────────────────────────────
+def _corelocation() -> tuple[float, float, str] | None:
+    if not Path(CORELOC).exists():
+        return None
+    try:
+        out = subprocess.run([CORELOC, "-once", "-format", "%latitude %longitude"],
+                             capture_output=True, text=True, timeout=8)
+        lat, lon = map(float, out.stdout.split()[:2])
+        return lat, lon, "CoreLocation"
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def _ip_lookup() -> tuple[float, float, str] | None:
+    try:
+        req = urllib.request.Request("https://ipinfo.io/json",
+                                     headers={"User-Agent": f"solar-brightness/{VERSION}"})
+        with urllib.request.urlopen(req, timeout=3) as r:
+            d = json.loads(r.read().decode())
+        lat, lon = map(float, d["loc"].split(","))
+        return lat, lon, f"IP: {d.get('city', '?')}, {d.get('country', '?')}"
+    except Exception:
+        return None
+
+
+def resolve_location(cfg: dict, state: dict, fresh: bool = False) -> tuple[float, float, str] | None:
+    """Pinned > CoreLocation > IP (cached) > last known. None when nothing is known."""
+    pin = cfg.get("location")
+    if pin and not fresh:
+        try:
+            return float(pin["lat"]), float(pin["lon"]), f"pinned: {pin.get('name', '')}".strip()
+        except (KeyError, TypeError, ValueError):
+            print("config.json: location needs lat and lon", file=sys.stderr)
+    found = _corelocation()
+    cache = state.get("location_cache") or {}
+    if not found and cfg.get("ip_lookup", True):
+        young = cache and time.time() - cache.get("ts", 0) < cfg["ip_cache_hours"] * 3600
+        if young and not fresh:
+            return cache["lat"], cache["lon"], cache["name"] + " (cached)"
+        found = _ip_lookup()
+    if found:
+        state["location_cache"] = {"lat": found[0], "lon": found[1], "name": found[2], "ts": time.time()}
+        return found
+    if cache:
+        return cache["lat"], cache["lon"], cache["name"] + " (last known, offline)"
+    return None
+
+
+# ── displays ─────────────────────────────────────────────────────────────────
+def external_displays() -> list[tuple[str, str]]:
+    """[(m1ddc number, model name)] for DDC monitors. The built-in panel shows as (null)."""
+    if not Path(M1DDC).exists():
+        return []
+    try:
+        out = subprocess.run([M1DDC, "display", "list"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_m1ddc_list(out.stdout)
+
+
+def parse_m1ddc_list(text: str) -> list[tuple[str, str]]:
+    """Parse `m1ddc display list`: "[1] VP2756-2K (UUID)". Skips the built-in "(null)"."""
+    found = []
+    for line in text.splitlines():
+        m = re.match(r"\s*\[(\d+)\]\s+(.*?)\s+\(([0-9A-Fa-f-]+)\)\s*$", line)
+        if m and m.group(2) != "(null)":
+            found.append((m.group(1), m.group(2)))
+    return found
+
+
+def _ddc_read(num: str) -> int | None:
+    try:
+        out = subprocess.run([M1DDC, "display", num, "get", "luminance"],
+                             capture_output=True, text=True, timeout=10)
+        v = int(out.stdout.strip())
+        return v if 0 <= v <= 100 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def external_get(num: str) -> int | None:
+    """DDC runs over I2C and sometimes returns garbage. Trust two equal reads only."""
+    a = _ddc_read(num)
+    if a is None:
+        return None
+    time.sleep(0.4)
+    return a if a == _ddc_read(num) else None
+
+
+def external_set(num: str, level: int) -> bool:
+    try:
+        r = subprocess.run([M1DDC, "display", num, "set", "luminance", str(level)],
+                           capture_output=True, text=True, timeout=10)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+_DS = None
+
+
+def _display_services():
+    """CoreGraphics plus DisplayServices, the private framework behind the brightness keys."""
+    global _DS
+    if _DS is None:
+        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        ds = ctypes.CDLL("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices")
+        cg.CGGetOnlineDisplayList.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32),
+                                              ctypes.POINTER(ctypes.c_uint32)]
+        cg.CGDisplayIsBuiltin.argtypes = [ctypes.c_uint32]
+        ds.DisplayServicesGetBrightness.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        ds.DisplayServicesSetBrightness.argtypes = [ctypes.c_uint32, ctypes.c_float]
+        _DS = (cg, ds)
+    return _DS
+
+
+def internal_display() -> int | None:
+    """CGDirectDisplayID of the built-in panel, or None (Mac mini, lid closed)."""
+    try:
+        cg, ds = _display_services()
+        ids = (ctypes.c_uint32 * 16)()
+        count = ctypes.c_uint32()
+        if cg.CGGetOnlineDisplayList(16, ids, ctypes.byref(count)) != 0:
+            return None
+        for i in range(count.value):
+            if cg.CGDisplayIsBuiltin(ids[i]):
+                value = ctypes.c_float()
+                if ds.DisplayServicesGetBrightness(ids[i], ctypes.byref(value)) == 0:
+                    return ids[i]
+    except OSError:
+        pass
+    return None
+
+
+def internal_get(display: int) -> int | None:
+    try:
+        _, ds = _display_services()
+        value = ctypes.c_float()
+        if ds.DisplayServicesGetBrightness(display, ctypes.byref(value)) == 0:
+            return round(value.value * 100)
+    except OSError:
+        pass
+    return None
+
+
+def internal_set(display: int, level: int) -> bool:
+    _, ds = _display_services()
+    return ds.DisplayServicesSetBrightness(display, level / 100) == 0
+
+
+# ── commands ─────────────────────────────────────────────────────────────────
+def cmd_sun(cfg: dict, loc: tuple[float, float, str], day: str | None) -> int:
+    lat, lon, src = loc
+    now = datetime.now().astimezone()
+    base = datetime.strptime(day, "%Y-%m-%d").astimezone() if day else now
+    midnight = base.replace(hour=0, minute=0, second=0, microsecond=0)
+    print(f"location {lat:.4f}, {lon:.4f}  ({src})   date {base:%Y-%m-%d}   zone {base:%Z}\n")
+    for name, t in sun_events(base, lat, lon):
+        print(f"  {name:8s} {t:%H:%M}")
+    print("\n  time   sun       built-in  external")
+    for h in range(0, 24, 2):
+        t = midnight.replace(hour=h)
+        e = solar_elevation(t, lat, lon)
+        print(f"  {h:02d}:00  {e:6.1f}°   {level_for(e, cfg['curves']['internal']):5d}  "
+              f"{level_for(e, cfg['curves']['external']):8d}")
+    if midnight.date() == now.date():
+        e = solar_elevation(now, lat, lon)
+        print(f"\n  now {now:%H:%M}  {e:6.1f}°   {level_for(e, cfg['curves']['internal']):5d}  "
+              f"{level_for(e, cfg['curves']['external']):8d}")
+    return 0
+
+
+def cmd_set_location(args: list[str], cfg: dict, state: dict) -> int:
+    if not args:
+        print("usage: --set-location LAT LON [NAME] | here | auto")
+        return 2
+    if args[0] == "auto":
+        save_config_key("location", None)
+        print("location unpinned, detecting automatically")
+        return 0
+    if args[0] == "here":
+        loc = resolve_location(cfg, state, fresh=True)
+        if not loc:
+            print("no location found (no CoreLocationCLI, IP lookup failed)")
+            return 1
+        lat, lon, name = loc
+    else:
+        try:
+            lat, lon = float(args[0]), float(args[1])
+        except (ValueError, IndexError):
+            print("LAT and LON must be numbers, e.g. --set-location 38.7223 -9.1393 Lisbon")
+            return 2
+        name = " ".join(args[2:]) or f"{lat:.4f}, {lon:.4f}"
+    save_config_key("location", {"lat": lat, "lon": lon, "name": name})
+    print(f"pinned: {name}  ({lat:.4f}, {lon:.4f})")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if "--help" in argv or "-h" in argv:
+        print(__doc__.strip())
+        return 0
+    if "--version" in argv:
+        print(VERSION)
+        return 0
+
+    cfg = load_config()
+    state = read_state()
+
+    if "--set-location" in argv:
+        rc = cmd_set_location(argv[argv.index("--set-location") + 1:], cfg, state)
+        write_state(state)
+        return rc
+
+    if "--lat" in argv and "--lon" in argv:
+        loc = (float(argv[argv.index("--lat") + 1]), float(argv[argv.index("--lon") + 1]), "command line")
+    else:
+        loc = resolve_location(cfg, state)
+
+    if "--sun" in argv:
+        if not loc:
+            print("no location: pin one with --set-location LAT LON")
+            return 1
+        day = argv[argv.index("--date") + 1] if "--date" in argv else None
+        write_state(state)
+        return cmd_sun(cfg, loc, day)
+
+    externals = external_displays()
+    internal = internal_display()
+
+    if "--where" in argv:
+        print(f"location   {f'{loc[0]:.4f}, {loc[1]:.4f}  ({loc[2]})' if loc else 'unknown'}")
+        print(f"config     {CONFIG if CONFIG.exists() else 'defaults (no config.json)'}")
+        print(f"built-in   {'yes' if internal is not None else 'no'}")
+        print(f"external   {', '.join(n for _, n in externals) or 'none'}"
+              f"{'' if Path(M1DDC).exists() else '  (m1ddc not installed)'}")
+        print(f"CoreLocationCLI {'yes' if Path(CORELOC).exists() else 'no'}")
+        write_state(state)
+        return 0
+
+    now = datetime.now().astimezone()
+    if not loc:
+        print(f"{now:%H:%M}  no location yet, brightness untouched "
+              f"(pin one: solar-brightness --set-location LAT LON)", flush=True)
+        return 0
+
+    dry = "--dry-run" in argv
+    if "--resume" in argv:
+        state.pop("hold_until", None)
+        state.pop("applied", None)
+
+    elevation = solar_elevation(now, loc[0], loc[1])
+    targets: dict[str, int] = {}
+    actual: dict[str, int | None] = {}
+    if internal is not None:
+        level = level_for(elevation, cfg["curves"]["internal"])
+        targets["built-in"] = max(cfg["min"]["internal"], min(100, level))
+        actual["built-in"] = internal_get(internal)
+    for num, name in externals:
+        level = level_for(elevation, cfg["curves"]["external"]) + int(cfg["offsets"].get(name, 0))
+        targets[name] = max(cfg["min"]["external"], min(100, level))
+        actual[name] = external_get(num)
+
+    head = (f"{now:%H:%M}  sun {elevation:5.1f}°  ->  "
+            + ("  ".join(f"{k} {v}" for k, v in targets.items()) or "no controllable display")
+            + f"   [{loc[2]}]")
+    if not targets:
+        print(head, flush=True)
+        write_state(state)
+        return 0
+
+    applied: dict = dict(state.get("applied") or {})
+    for key, value in actual.items():
+        last = applied.get(key)
+        if value is not None and last is not None and abs(value - last) > cfg["override_tolerance"]:
+            until = now + timedelta(minutes=cfg["hold_minutes"])
+            print(f"{head}\n  manual change ({key}: {last} -> {value}), keeping it until {until:%H:%M}",
+                  flush=True)
+            if not dry:
+                applied[key] = value
+                state.update({"applied": applied, "hold_until": until.isoformat()})
+                write_state(state)
+            return 0
+
+    hold = state.get("hold_until")
+    if hold:
+        until = datetime.fromisoformat(hold)
+        if now < until:
+            left = max(1, round((until - now).total_seconds() / 60))
+            print(f"{head}\n  your setting holds for {left} more min", flush=True)
+            write_state(state)
+            return 0
+        state.pop("hold_until", None)
+
+    todo = {k: v for k, v in targets.items() if actual.get(k) != v}
+    if not todo:
+        print(f"{head}   (already there)", flush=True)
+        if not dry:
+            state["applied"] = targets
+            write_state(state)
+        return 0
+
+    print(head + ("   [dry run]" if dry else ""), flush=True)
+    if dry:
+        return 0
+    numbers = dict((name, num) for num, name in externals)
+    for key, level in todo.items():
+        ok = internal_set(internal, level) if key == "built-in" else external_set(numbers[key], level)
+        print(f"  {key:10s} {actual.get(key)} -> {level}" + ("" if ok else "  (failed)"), flush=True)
+    state["applied"] = {**applied, **targets}
+    write_state(state)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

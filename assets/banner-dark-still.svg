@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420" role="img" aria-labelledby="t d">
+<title id="t">solar-brightness</title>
+<desc id="d">The sun crosses the sky over one day while a monitor dims and brightens with it.</desc>
+<style>
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  .title { font-size: 46px; font-weight: 700; fill: #EEF1F8; letter-spacing: -0.5px; }
+  .tag { font-size: 21px; fill: #8F98BD; }
+  .read { font-size: 20px; font-weight: 600; fill: #FFB23F; }
+</style>
+<defs>
+  <clipPath id="sky"><rect width="1200" height="246"/></clipPath>
+  <radialGradient id="halo">
+    <stop offset="0.3" stop-color="#FFB23F" stop-opacity="0.32"/>
+    <stop offset="1" stop-color="#FFB23F" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+    <stop offset="0" stop-color="#FFE3A8" stop-opacity="0.55"/>
+    <stop offset="1" stop-color="#FFE3A8" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+
+<rect width="1200" height="246" fill="#0B1330"/>
+<rect width="1200" height="246" fill="#1E3A70">
+  <set attributeName="opacity" to="1"/>
+</rect>
+<g opacity="0"><circle cx="140" cy="52" r="2.2" fill="#C9D2F2"/><circle cx="232" cy="120" r="1.6" fill="#C9D2F2"/><circle cx="318" cy="40" r="1.6" fill="#C9D2F2"/><circle cx="455" cy="92" r="2.2" fill="#C9D2F2"/><circle cx="590" cy="30" r="1.6" fill="#C9D2F2"/><circle cx="702" cy="108" r="1.6" fill="#C9D2F2"/><circle cx="812" cy="58" r="2.2" fill="#C9D2F2"/><circle cx="930" cy="34" r="1.6" fill="#C9D2F2"/><circle cx="1012" cy="124" r="1.6" fill="#C9D2F2"/><circle cx="1104" cy="70" r="2.2" fill="#C9D2F2"/><circle cx="380" cy="176" r="1.6" fill="#C9D2F2"/><circle cx="860" cy="170" r="1.6" fill="#C9D2F2"/><circle cx="1160" cy="150" r="2.2" fill="#C9D2F2"/><circle cx="60" cy="150" r="1.6" fill="#C9D2F2"/>
+  <set attributeName="opacity" to="0"/>
+</g>
+<path d="M70,246 L92.083,234.751 L114.167,223.549 L136.25,212.444 L158.333,201.483 L180.417,190.712 L202.5,180.178 L224.583,169.926 L246.667,160 L268.75,150.442 L290.833,141.293 L312.917,132.593 L335,124.378 L357.083,116.684 L379.167,109.543 L401.25,102.987 L423.333,97.044 L445.417,91.738 L467.5,87.093 L489.583,83.128 L511.667,79.861 L533.75,77.305 L555.833,75.471 L577.917,74.368 L600,74 L622.083,74.368 L644.167,75.471 L666.25,77.305 L688.333,79.861 L710.417,83.128 L732.5,87.093 L754.583,91.738 L776.667,97.044 L798.75,102.987 L820.833,109.543 L842.917,116.684 L865,124.378 L887.083,132.593 L909.167,141.293 L931.25,150.442 L953.333,160 L975.417,169.926 L997.5,180.178 L1019.583,190.712 L1041.667,201.483 L1063.75,212.444 L1085.833,223.549 L1107.917,234.751 L1130,246" fill="none" stroke="#FFB23F" stroke-opacity="0.35" stroke-width="2" stroke-dasharray="2 9" stroke-linecap="round"/>
+
+<g clip-path="url(#sky)">
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="401.25,102.987" dur="0.001s" fill="freeze"/>
+    <circle r="64" fill="url(#halo)"/>
+    <g stroke="#FFB23F" stroke-width="4" stroke-linecap="round"><line x1="26" y1="0" x2="36" y2="0"/><line x1="18.385" y1="18.385" x2="25.456" y2="25.456"/><line x1="0" y1="26" x2="0" y2="36"/><line x1="-18.385" y1="18.385" x2="-25.456" y2="25.456"/><line x1="-26" y1="0" x2="-36" y2="0"/><line x1="-18.385" y1="-18.385" x2="-25.456" y2="-25.456"/><line x1="-0" y1="-26" x2="-0" y2="-36"/><line x1="18.385" y1="-18.385" x2="25.456" y2="-25.456"/></g>
+    <circle r="19" fill="#FFB23F"/>
+  </g>
+</g>
+
+<rect y="246" width="1200" height="174" fill="#080D22"/>
+<line x1="0" y1="246" x2="1200" y2="246" stroke="#36407A" stroke-width="2"/>
+
+<ellipse cx="1032" cy="280" rx="150" ry="96" fill="url(#glow)">
+  <set attributeName="opacity" to="1"/>
+</ellipse>
+<rect x="936" y="218" width="192" height="122" rx="10" fill="#2A3263"/>
+<rect x="945" y="227" width="174" height="98" rx="4" fill="#FFE3A8">
+  <set attributeName="opacity" to="1"/>
+</rect>
+<rect x="982" y="306" height="6" rx="3" fill="#2A3263" opacity="0.55" width="50">
+  <set attributeName="width" to="71.2"/>
+</rect>
+<rect x="1016" y="340" width="32" height="16" fill="#2A3263"/>
+<rect x="992" y="354" width="80" height="6" rx="3" fill="#2A3263"/>
+
+<text x="64" y="318" class="mono title">solar-brightness</text>
+<text x="66" y="352" class="mono tag">your screen dims and brightens with the sun</text>
+<text x="66" y="394" class="mono read" opacity="1" xml:space="preserve">06:00  sun    0.0°  ->  built-in 48<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">07:00  sun   10.9°  ->  built-in 60<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">08:00  sun   21.0°  ->  built-in 67<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">09:00  sun   29.7°  ->  built-in 70<set attributeName="opacity" to="1"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">10:00  sun   36.4°  ->  built-in 70<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">11:00  sun   40.6°  ->  built-in 70<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">12:00  sun   42.0°  ->  built-in 70<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">13:00  sun   40.6°  ->  built-in 70<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">14:00  sun   36.4°  ->  built-in 70<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">15:00  sun   29.7°  ->  built-in 70<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">16:00  sun   21.0°  ->  built-in 67<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">17:00  sun   10.9°  ->  built-in 60<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">18:00  sun    0.0°  ->  built-in 48<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">19:00  sun  -10.9°  ->  built-in 39<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">20:00  sun  -21.0°  ->  built-in 38<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">21:00  sun  -29.7°  ->  built-in 38<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">22:00  sun  -36.4°  ->  built-in 38<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">23:00  sun  -40.6°  ->  built-in 38<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">00:00  sun  -42.0°  ->  built-in 38<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">01:00  sun  -40.6°  ->  built-in 38<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">02:00  sun  -36.4°  ->  built-in 38<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">03:00  sun  -29.7°  ->  built-in 38<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">04:00  sun  -21.0°  ->  built-in 38<set attributeName="opacity" to="0"/></text><text x="66" y="394" class="mono read" opacity="0" xml:space="preserve">05:00  sun  -10.9°  ->  built-in 39<set attributeName="opacity" to="0"/></text>
+</svg>
